@@ -1,108 +1,93 @@
 package server;
 
-import javax.swing.*;
-import javax.swing.border.EmptyBorder;
-import java.awt.*;
-import java.io.IOException;
-import java.net.ServerSocket;
+import java.io.*;
 import java.net.Socket;
 
-public class ServerGUI extends JFrame {
-    private DefaultListModel<String> connectedPlayersModel;
-    private JList<String> connectedPlayersList;
-    private Room playRoom;
-    private Room lobbyRoom; 
+public class ClientHandler implements Runnable {
+    private Socket socket;
+    private BufferedReader in;
+    private PrintWriter out;
+    private String clientName;
+    private ServerGUI serverGUI;
+    private Room currentRoom;
 
-    public ServerGUI() {
+    public ClientHandler(Socket socket, ServerGUI gui) throws IOException {
+        this.socket = socket;
+        this.serverGUI = gui;
+        in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+        out = new PrintWriter(socket.getOutputStream(), true);
+    }
+
+    @Override
+    public void run() {
         try {
-            UIManager.setLookAndFeel("javax.swing.plaf.nimbus.NimbusLookAndFeel");
-        } catch (Exception e) {}
+            while (true) {
+                String request = in.readLine();
+                if (request == null) break;
 
-        setTitle("⚙️ Server Dashboard");
-        setSize(350, 450);
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        getContentPane().setBackground(new Color(33, 47, 61));
-        
-        connectedPlayersModel = new DefaultListModel<>();
-        connectedPlayersList = new JList<>(connectedPlayersModel);
-        
-        playRoom = new Room(false, this);
-        lobbyRoom = new Room(true, this);
-        
-        connectedPlayersList.setBackground(new Color(23, 32, 42));
-        connectedPlayersList.setForeground(new Color(46, 204, 113));
-        connectedPlayersList.setFont(new Font("Monospaced", Font.BOLD, 16));
-        connectedPlayersList.setBorder(new EmptyBorder(10, 10, 10, 10));
-
-        JLabel titleLabel = new JLabel("🟢 Live Connected Players:");
-        titleLabel.setForeground(Color.WHITE);
-        titleLabel.setFont(new Font("Tahoma", Font.BOLD, 16));
-        titleLabel.setBorder(new EmptyBorder(15, 15, 10, 15));
-        
-        JScrollPane scrollPane = new JScrollPane(connectedPlayersList);
-        scrollPane.setBorder(BorderFactory.createLineBorder(new Color(46, 204, 113), 2));
-
-        setLayout(new BorderLayout());
-        add(titleLabel, BorderLayout.NORTH);
-        
-        JPanel centerPanel = new JPanel(new BorderLayout());
-        centerPanel.setBackground(new Color(33, 47, 61));
-        centerPanel.setBorder(new EmptyBorder(0, 15, 15, 15));
-        centerPanel.add(scrollPane, BorderLayout.CENTER);
-        
-        add(centerPanel, BorderLayout.CENTER);
-        
-        setVisible(true);
-        startServer();
-    }
-
-    private void startServer() {
-        new Thread(() -> {
-            try (ServerSocket serverSocket = new ServerSocket(9090)) {
-                System.out.println("Server is running on port 9090...");
-                while (true) {
-                    Socket clientSocket = serverSocket.accept();
-                    ClientHandler handler = new ClientHandler(clientSocket, this);
-                    new Thread(handler).start();
+                if (request.startsWith("CONNECT:")) {
+                    this.clientName = request.split(":")[1];
+                    serverGUI.addConnectedPlayer(clientName);
+                    sendMessage("CONNECTED");
+                    serverGUI.assignToLobby(this);
+                } 
+                else if (request.equals("PLAY")) {
+                    serverGUI.assignPlayerToRoom(this);
                 }
-            } catch (IOException e) {
-                e.printStackTrace();
+                else if (request.startsWith("SUBMIT_WORD:")) {
+                    if (currentRoom != null) {
+                        currentRoom.submitWord(this, request.substring(12));
+                    }
+                }
+                else if (request.startsWith("I_WON_BROADCAST:")) {
+                    if (currentRoom != null) {
+                        String data = request.substring(16);
+                        if (data.equals("FINAL_VICTORY")) {
+                            currentRoom.announceWinnerAndEnd(this.getClientName());
+                        }
+                    }
+                }
+                else if (request.equals("LEAVE_GAME")) {
+                    if (currentRoom != null) {
+                        currentRoom.removePlayer(this);
+                    }
+                    serverGUI.assignToLobby(this);
+                    sendMessage("ROOM_TYPE:LOBBY");
+                }
+                else if (request.equals("QUIT")) {
+                    break;
+                }
             }
-        }).start();
-    }
-
-    public synchronized void addConnectedPlayer(String name) {
-        SwingUtilities.invokeLater(() -> connectedPlayersModel.addElement("▶️ " + name));
-    }
-
-    public synchronized void removeConnectedPlayer(String name) {
-        SwingUtilities.invokeLater(() -> connectedPlayersModel.removeElement("▶️ " + name));
-    }
-
-    public synchronized void assignToLobby(ClientHandler player) {
-        lobbyRoom.addPlayer(player);
-        player.setCurrentRoom(lobbyRoom);
-    }
-
-    public synchronized void assignPlayerToRoom(ClientHandler player) {
-        if (!playRoom.isFullOrStarted()) {
-            lobbyRoom.removePlayer(player); 
-            playRoom.addPlayer(player);
-            player.setCurrentRoom(playRoom);
-        } else {
-            player.sendMessage("NOTIFICATION:Play Room is currently full!");
+        } catch (IOException e) {
+            System.out.println("Player disconnected unexpectedly.");
+        } finally {
+            disconnect();
         }
     }
 
-    public boolean isPlayRoomFull() {
-        return playRoom.isFullOrStarted();
+    public void sendMessage(String msg) {
+        out.println(msg);
     }
 
-    public void broadcastToLobby(String msg) {
-        lobbyRoom.broadcastToRoom(msg);
+    public String getClientName() {
+        return clientName;
     }
 
-    public static void main(String[] args) {
-        new ServerGUI();
+    public void setCurrentRoom(Room room) {
+        this.currentRoom = room;
+    }
+
+    private void disconnect() {
+        try {
+            serverGUI.removeConnectedPlayer(clientName);
+            if (currentRoom != null) {
+                currentRoom.removePlayer(this);
+            }
+            in.close();
+            out.close();
+            socket.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 }
