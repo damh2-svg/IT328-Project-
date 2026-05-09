@@ -1,20 +1,16 @@
 package server;
 
 import java.util.*;
-import java.util.Timer;
-import java.util.TimerTask;
 
 public class Room {
-    // تم استعادة الأسماء الأصلية لضمان عمل الكلاسات الأخرى (ServerGUI & ClientHandler)
     private ArrayList<ClientHandler> players; 
     private final int MAX_PLAYERS = 4;
-    private boolean isGameStarted = false; // هذا المتغير تستخدمه ServerGUI
+    private boolean isGameStarted = false; 
     private boolean isWaitingQueue;
     private ServerGUI serverGUI;
     private Timer gameTimer;
     private int secondsLeft;
 
-    // متغيرات إضافية لفيز 2 (منطق اللعبة)
     private HashMap<String, Integer> scores; 
     private int currentRound = 0;
     private final int TOTAL_ROUNDS = 5;
@@ -28,46 +24,57 @@ public class Room {
     }
 
     public synchronized boolean addPlayer(ClientHandler player) {
-        if (players.contains(player)) {
-            return false;
-        }
+        if (players.contains(player)) return false;
 
         if (isWaitingQueue) {
             players.add(player);
             broadcastRoomUpdate();
-            if (serverGUI.isPlayRoomFull()) {
-                player.sendMessage("PLAY_ROOM_FULL");
-            } else {
-                player.sendMessage("PLAY_ROOM_AVAILABLE");
-            }
             return true;
         }
 
+        // --- التعديل هنا: إرسال الإشعار للبقية فقط وليس للاعب نفسه ---
         for (ClientHandler p : players) {
-            p.sendMessage("NOTIFICATION:Player " + player.getClientName() + " has joined the Play Room!");
+            p.sendMessage("NOTIFICATION:👤 Player " + player.getClientName() + " has joined the Play Room!");
         }
 
         players.add(player);
         player.sendMessage("ROOM_TYPE:PLAY_ROOM");
+        // نرسل للاعب المنضم رسالة ترحيب خاصة به فقط إذا أردتِ
+        player.sendMessage("NOTIFICATION:Welcome to the Play Room!");
+        
         broadcastRoomUpdate();
 
         if (isFullOrStarted()) {
             serverGUI.broadcastToLobby("PLAY_ROOM_FULL");
         }
 
-        // منطق البدء (نفس كودك الأصلي)
+                // --- التعديل هنا: إضافة تأخير ثانية عند اكتمال العدد لـ 4 لاعبين ---
         if (players.size() == 2 && !isGameStarted) {
-            startTimer();
+            startTimer(); // يبدأ عد الـ 30 ثانية المعتاد
         } else if (players.size() == MAX_PLAYERS && !isGameStarted) {
-            startGame();
+            // ننتظر ثانية واحدة لكي يظهر اسم اللاعب الرابع في القائمة قبل أن تبدأ اللعبة فجأة
+            new Timer().schedule(new TimerTask() {
+                @Override
+                public void run() {
+                    startGame();
+                }
+            }, 1000); 
         }
+
 
         return true;
     }
 
     public synchronized void removePlayer(ClientHandler player) {
         players.remove(player);
-        broadcastRoomUpdate();
+        
+        if (isGameStarted) {
+            broadcastToRoom("NOTIFICATION:⚠️ Player " + player.getClientName() + " has left the game.");
+            if (players.size() == 1) {
+                broadcastToRoom("NOTIFICATION:📢 All other players left. Ending game...");
+                endGame(); 
+            }
+        } 
 
         if (!isWaitingQueue) { 
             if (players.size() < 2 && gameTimer != null && !isGameStarted) {
@@ -80,12 +87,11 @@ public class Room {
                 serverGUI.broadcastToLobby("PLAY_ROOM_AVAILABLE");
             }
         }
+        broadcastRoomUpdate();
     }
 
     private void startTimer() {
-        if (gameTimer != null) {
-            gameTimer.cancel();
-        }
+        if (gameTimer != null) gameTimer.cancel();
         secondsLeft = 30;
         gameTimer = new Timer();
         gameTimer.scheduleAtFixedRate(new TimerTask() {
@@ -101,25 +107,28 @@ public class Room {
         }, 0, 1000);
     }
 
-    // هذه الدالة الآن تهيئ اللعبة وتبدأ الجولة الأولى
     private synchronized void startGame() {
         if (isGameStarted) return;
         isGameStarted = true;
         
-        if (gameTimer != null) {
-            gameTimer.cancel();
-        }
+        if (gameTimer != null) gameTimer.cancel();
 
-        // تصفير النقاط لجميع اللاعبين
         for (ClientHandler p : players) {
             scores.put(p.getClientName(), 0);
         }
 
         broadcastToRoom("TIMER_STOP");
+        // إرسال رسالة البداية
         broadcastToRoom("NOTIFICATION:🔥 GAME STARTED! 🔥");
         serverGUI.broadcastToLobby("PLAY_ROOM_FULL");
         
-        startNextRound(); // بدء الجولات
+        // --- تعديل الرسايل: ننتظر 3 ثواني لتختفي رسالة البداية ثم يبدأ الحرف الأول ---
+        new Timer().schedule(new TimerTask() {
+            @Override
+            public void run() {
+                startNextRound();
+            }
+        }, 3000); 
     }
 
     private void startNextRound() {
@@ -131,11 +140,18 @@ public class Room {
         currentRound++;
         currentLetter = (char) ('A' + new Random().nextInt(26));
         
-        broadcastToRoom("NEW_ROUND:" + currentRound + ":" + currentLetter);
-        broadcastToRoom("NOTIFICATION:Round " + currentRound + "! Letter is: " + currentLetter);
+        // نرسل إشعار الحرف
+        broadcastToRoom("NOTIFICATION:Round " + currentRound + "! Starting Letter: " + currentLetter);
         
-        // تايمر الجولة (15 ثانية)
-        runRoundTimer(15);
+        // ننتظر ثانية واحدة بعد إشعار الحرف قبل تحديث الواجهة برسالة NEW_ROUND
+        // لضمان أن اللاعب رأى الحرف في الـ Notification أولاً
+        new Timer().schedule(new TimerTask() {
+            @Override
+            public void run() {
+                broadcastToRoom("NEW_ROUND:" + currentRound + ":" + currentLetter);
+                runRoundTimer(15); 
+            }
+        }, 2000);
     }
 
     private void runRoundTimer(int seconds) {
@@ -149,21 +165,26 @@ public class Room {
                     broadcastToRoom("TIMER_UPDATE:" + secondsLeft);
                     secondsLeft--;
                 } else {
-                    startNextRound();
+                    // قبل الانتقال للجولة التالية، نرسل إشعاراً بانتهاء الوقت
+                    broadcastToRoom("NOTIFICATION:Time's up for Round " + currentRound + "!");
+                    new Timer().schedule(new TimerTask() {
+                        @Override
+                        public void run() {
+                            startNextRound();
+                        }
+                    }, 1500); // انتظار بسيط قبل الجولة القادمة
                 }
             }
         }, 0, 1000);
     }
 
-    // الدالة التي سيستدعيها زميلك (Person 2) من ClientHandler
     public synchronized void handleSubmittedWord(String playerName, String word) {
         if (!isGameStarted) return;
 
         if (word.toUpperCase().startsWith(String.valueOf(currentLetter))) {
-            int currentPoints = scores.getOrDefault(playerName, 0);
-            scores.put(playerName, currentPoints + word.length());
-            
-            // إرسال تحديث بالنقاط للجميع
+            int earnedPoints = word.length();
+            int currentTotal = scores.getOrDefault(playerName, 0);
+            scores.put(playerName, currentTotal + earnedPoints);
             syncScores();
         }
     }
@@ -180,8 +201,9 @@ public class Room {
         isGameStarted = false;
         if (gameTimer != null) gameTimer.cancel();
 
-        String winner = "No one";
+        String winner = "No Winner";
         int maxScore = -1;
+        
         for (Map.Entry<String, Integer> entry : scores.entrySet()) {
             if (entry.getValue() > maxScore) {
                 maxScore = entry.getValue();
@@ -189,7 +211,8 @@ public class Room {
             }
         }
 
-        broadcastToRoom("GAME_OVER:Winner is " + winner + " with " + maxScore + " points!");
+        String finalResult = (maxScore <= 0) ? "Game over! No points were scored." : "Winner is " + winner + " with " + maxScore + " points!";
+        broadcastToRoom("GAME_OVER:" + finalResult);
         serverGUI.broadcastToLobby("PLAY_ROOM_AVAILABLE");
     }
 
