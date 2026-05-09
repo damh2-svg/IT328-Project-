@@ -11,7 +11,7 @@ public class ClientGUI extends JFrame {
     private BufferedReader in;
     private PrintWriter out;
     
-    private JPanel loginPanel, lobbyPanel, playRoomPanel;
+    private JPanel loginPanel, lobbyPanel, playRoomPanel, gameBoardPanel;
     private JTextField nameField;
     private JButton connectBtn, joinBtn;
     
@@ -22,6 +22,13 @@ public class ClientGUI extends JFrame {
     private JList<String> roomList;
     
     private JLabel timerLabel;
+    
+    private JLabel targetLetterLabel;
+    private JLabel roundTimerLabel;
+    private JTextField wordInputField;
+    private JButton submitWordBtn;
+    private JButton leaveGameBtn;
+    private JTextArea scoreboardArea;
 
     public ClientGUI() {
         try {
@@ -29,7 +36,7 @@ public class ClientGUI extends JFrame {
         } catch (Exception e) {}
 
         setTitle("🎮 My Fashion World - Multiplayer");
-        setSize(450, 450);
+        setSize(550, 450);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new CardLayout());
         setLocationRelativeTo(null);
@@ -37,10 +44,12 @@ public class ClientGUI extends JFrame {
         setupLoginPanel();
         setupLobbyPanel();
         setupPlayRoomPanel();
+        setupGameBoardPanel();
 
         add(loginPanel, "LOGIN");
         add(lobbyPanel, "LOBBY");
         add(playRoomPanel, "PLAY_ROOM");
+        add(gameBoardPanel, "GAME_BOARD");
         
         setVisible(true);
     }
@@ -157,6 +166,69 @@ public class ClientGUI extends JFrame {
         playRoomPanel.add(scrollPane, BorderLayout.CENTER);
     }
 
+    private void setupGameBoardPanel() {
+        gameBoardPanel = new JPanel(new BorderLayout(10, 10));
+        gameBoardPanel.setBackground(new Color(44, 62, 80));
+        gameBoardPanel.setBorder(new EmptyBorder(20, 20, 20, 20));
+
+        JPanel topPanel = new JPanel(new BorderLayout());
+        topPanel.setBackground(new Color(44, 62, 80));
+        
+        leaveGameBtn = new JButton("LEAVE");
+        leaveGameBtn.setBackground(new Color(231, 76, 60));
+        leaveGameBtn.setForeground(Color.WHITE);
+        leaveGameBtn.setFocusPainted(false);
+        leaveGameBtn.addActionListener(e -> out.println("LEAVE_GAME"));
+
+        targetLetterLabel = new JLabel("Target Letter: -", SwingConstants.CENTER);
+        targetLetterLabel.setFont(new Font("Verdana", Font.BOLD, 26));
+        targetLetterLabel.setForeground(new Color(231, 76, 60)); 
+
+        roundTimerLabel = new JLabel("⏳ 15s", SwingConstants.RIGHT);
+        roundTimerLabel.setFont(new Font("Tahoma", Font.BOLD, 20));
+        roundTimerLabel.setForeground(new Color(241, 196, 15));
+
+        topPanel.add(leaveGameBtn, BorderLayout.WEST);
+        topPanel.add(targetLetterLabel, BorderLayout.CENTER);
+        topPanel.add(roundTimerLabel, BorderLayout.EAST);
+
+        JPanel centerPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 50));
+        centerPanel.setBackground(new Color(44, 62, 80));
+        
+        wordInputField = new JTextField(15);
+        wordInputField.setFont(new Font("Tahoma", Font.BOLD, 20));
+        wordInputField.setHorizontalAlignment(JTextField.CENTER);
+
+        submitWordBtn = new JButton("SUBMIT");
+        submitWordBtn.setFont(new Font("Tahoma", Font.BOLD, 18));
+        submitWordBtn.setBackground(new Color(46, 204, 113));
+        submitWordBtn.setForeground(Color.WHITE);
+        submitWordBtn.setFocusPainted(false);
+        
+        submitWordBtn.addActionListener(e -> {
+            String word = wordInputField.getText().trim();
+            if (!word.isEmpty()) {
+                out.println("SUBMIT_WORD:" + word);
+                wordInputField.setText("");
+                showToast("Word submitted!", 1500, 0);
+            }
+        });
+
+        centerPanel.add(wordInputField);
+        centerPanel.add(submitWordBtn);
+
+        scoreboardArea = new JTextArea(10, 12);
+        scoreboardArea.setEditable(false);
+        scoreboardArea.setBackground(new Color(52, 73, 94));
+        scoreboardArea.setForeground(Color.WHITE);
+        scoreboardArea.setFont(new Font("Monospaced", Font.BOLD, 14));
+        scoreboardArea.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+
+        gameBoardPanel.add(topPanel, BorderLayout.NORTH);
+        gameBoardPanel.add(centerPanel, BorderLayout.CENTER);
+        gameBoardPanel.add(new JScrollPane(scoreboardArea), BorderLayout.EAST);
+    }
+
     private void connectToServer() {
         String name = nameField.getText().trim();
         if (name.isEmpty()) {
@@ -201,6 +273,35 @@ public class ClientGUI extends JFrame {
         
         toast.setLocationRelativeTo(this);
         toast.setLocation(toast.getX(), toast.getY() - yOffset);
+        toast.setVisible(true);
+
+        Timer timer = new Timer(duration, e -> toast.dispose());
+        timer.setRepeats(false);
+        timer.start();
+    }
+
+    private void showBigToast(String message, int duration) {
+        JDialog toast = new JDialog(this, false);
+        toast.setUndecorated(true);
+        
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBackground(new Color(41, 128, 185)); 
+        
+        panel.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(new Color(241, 196, 15), 5), 
+            new EmptyBorder(40, 60, 40, 60)
+        ));
+
+        JLabel label = new JLabel(message);
+        label.setForeground(Color.WHITE);
+        label.setFont(new Font("Verdana", Font.BOLD, 26)); 
+        label.setHorizontalAlignment(SwingConstants.CENTER);
+        
+        panel.add(label);
+        toast.add(panel);
+        toast.pack();
+        
+        toast.setLocationRelativeTo(this);
         toast.setVisible(true);
 
         Timer timer = new Timer(duration, e -> toast.dispose());
@@ -264,10 +365,57 @@ public class ClientGUI extends JFrame {
                     else if (response.startsWith("ROOM_TYPE:")) {
                         String type = response.substring(10);
                         SwingUtilities.invokeLater(() -> {
+                            CardLayout cl = (CardLayout) getContentPane().getLayout();
                             if (type.equals("PLAY_ROOM")) {
-                                CardLayout cl = (CardLayout) getContentPane().getLayout();
                                 cl.show(getContentPane(), "PLAY_ROOM");
+                                timerLabel.setText(" ");
+                            } else if (type.equals("LOBBY")) {
+                                cl.show(getContentPane(), "LOBBY");
+                                timerLabel.setText(" ");
                             }
+                        });
+                    }
+                    else if (response.startsWith("GAME_STARTED:")) {
+                        String letter = response.substring(13);
+                        SwingUtilities.invokeLater(() -> {
+                            targetLetterLabel.setText("Target Letter: " + letter);
+                            wordInputField.setText("");
+                            wordInputField.setEnabled(true);
+                            submitWordBtn.setEnabled(true);
+                            CardLayout cl = (CardLayout) getContentPane().getLayout();
+                            cl.show(getContentPane(), "GAME_BOARD");
+                        });
+                    }
+                    else if (response.startsWith("ROUND_TIMER:")) {
+                        String time = response.substring(12);
+                        SwingUtilities.invokeLater(() -> roundTimerLabel.setText("⏳ " + time + "s"));
+                    }
+                    else if (response.startsWith("SCORES_UPDATE:")) {
+                        String[] scores = response.substring(14).split(",");
+                        SwingUtilities.invokeLater(() -> {
+                            scoreboardArea.setText("🏆 SCOREBOARD\n\n");
+                            for (String s : scores) {
+                                if (!s.isEmpty()) {
+                                    String[] parts = s.split("=");
+                                    scoreboardArea.append("👤 " + parts[0] + " : " + parts[1] + "\n");
+                                }
+                            }
+                        });
+                    }
+                    else if (response.startsWith("YOU_WON:")) {
+                        String data = response.substring(8);
+                        out.println("I_WON_BROADCAST:" + data);
+                    }
+                    else if (response.startsWith("BIG_WINNER:")) {
+                        String msg = response.substring(11);
+                        SwingUtilities.invokeLater(() -> showBigToast(msg, 4000));
+                    }
+                    else if (response.startsWith("GAME_ENDED:")) {
+                        String msg = response.substring(11);
+                        SwingUtilities.invokeLater(() -> {
+                            showToast(msg, 4000, 0);
+                            wordInputField.setEnabled(false);
+                            submitWordBtn.setEnabled(false);
                         });
                     }
                     else if (response.startsWith("NOTIFICATION:")) {
